@@ -234,6 +234,8 @@ func (d *Device) msgToPacketRoutine(id int) {
 				if mad.encryptedPktCh != nil {
 					mad.encryptedPktCh <- mad
 					return
+				} else {
+					log.Debug("msgToPacketRoutine %d: encryptedPktCh nil [%s]", id, msgType)
 				}
 
 				// create local transaction if needed
