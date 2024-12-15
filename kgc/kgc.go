@@ -1,194 +1,220 @@
-package kgc
+package KGC
 
 import (
+	"bytes"
+	"crypto/elliptic"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"math/big"
-	"github.com/emmansun/gmsm/sm2"
+
+	_ "github.com/emmansun/gmsm/sm2"
 	"github.com/emmansun/gmsm/sm3"
-	"github.com/BurntSushi/toml"
-	"os"
-	"path/filepath"
-	"github.com/OpenNHP/opennhp/kgc/user"
+	"github.com/tjfoc/gmsm/sm2"
 )
 
-var(
-	id = user.ID
-	curve = sm2.P256()
-	N = curve.Params().N
-	Gx = curve.Params().Gx
-	Gy = curve.Params().Gy
-	IdA = []byte(id)
-	EntlA = len(IdA) * 8
-	Ms *big.Int 
-	PpubX *big.Int 
-	PpubY *big.Int 
-	curveParams CurveParams
-	A, B *big.Int
-	WAx, WAy, W *big.Int
-	HA []byte
-	L *big.Int
-	TA *big.Int
-)
+// 定义 SM2 曲线的固定参数
+var fixedA, _ = new(big.Int).SetString("FFFFFFFEFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF00000000FFFFFFFFFFFFFFFC", 16) // 固定值 a
+var fixedB, _ = new(big.Int).SetString("FFFFFFFEFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF00000000FFFFFFFFFFFFFFFD", 16) // 固定值 b
 
-// A structure for storing configuration
-type CurveParams struct {
-    A string `toml:"a"`
-    B string `toml:"b"`
-}
+// 计算用户标识 HA = H256(ENTLA‖IDA‖a‖b‖xG‖yG‖xPub‖yPub)
+func CalculateHA(userID string, entlenA int, xPub, yPub *big.Int) []byte {
+	entla := make([]byte, 2)
+	binary.BigEndian.PutUint16(entla, uint16(entlenA))
 
-//InitConfig loads the configuration and initializes global variables
-func InitConfig() error {
-    // Get the current working directory path
-    wd, err := os.Getwd()
-    if err != nil {
-        return fmt.Errorf("error getting current directory: %v", err)
-    }
+	ida := []byte(userID)
 
-   // Path to splice TOML files
-    tomlFilePath := filepath.Join(wd, "kgc", "main", "etc", "Curve.toml")
+	// 获取椭圆曲线参数 G 点的坐标
+	curve1 := sm2.P256Sm2()
+	params := curve1.Params()
+	xG := params.Gx
+	yG := params.Gy
 
-   // Read and parse TOML files
-    _, err = toml.DecodeFile(tomlFilePath, &curveParams)
-    if err != nil {
-        return fmt.Errorf("error loading TOML file: %v", err)
-    }
+	// 拼接所有数据
+	ab := append(fixedA.Bytes(), fixedB.Bytes()...) // 使用固定值 a 和 b
+	gCoords := append(xG.Bytes(), yG.Bytes()...)
+	pubCoords := append(xPub.Bytes(), yPub.Bytes()...)
 
-    // Convert a and b from strings in TOML file to big.Int type
-    A = new(big.Int)
-    A.SetString(curveParams.A, 16)
-    B = new(big.Int)
-    B.SetString(curveParams.B, 16)
-    return nil
-}
+	data := bytes.Join([][]byte{entla, ida, ab, gCoords, pubCoords}, nil)
 
-func GetA() *big.Int {
-    return A
-}
-
-func GetB() *big.Int {
-    return B
-}
-
-// GenerateMasterKeyPairSM2,Generate the system's master private key ms and master public key Ppub
-func GenerateMasterKeyPairSM2() (*big.Int, *big.Int, error) {
-	curve := sm2.P256()
-	ms, err := rand.Int(rand.Reader, curve.Params().N)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to generate system master private key ms: %v", err)
-	}
-	if ms.Cmp(big.NewInt(0)) == 0 {
-		ms, err = rand.Int(rand.Reader, curve.Params().N)
-		if err != nil {
-			return nil, nil, fmt.Errorf("regeneration of system master private key ms failed: %v", err)
-		}
-	}
-	Ppubx, Ppuby := curve.ScalarBaseMult(ms.Bytes())
-	Ms = ms
-	PpubX = Ppubx
-	PpubY = Ppuby
-	return Ppubx, Ppuby, nil
-}
-
-// GenerateWA,Calculate WA = [w]G + UA
-func GenerateWA(UAx, UAy *big.Int) (*big.Int, *big.Int, *big.Int, error) {
-	curve := sm2.P256()
-	// Generate a random number w in the range [1, n-1]
-	w, err := rand.Int(rand.Reader, curve.Params().N)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to generate random number w: %v", err)
-	}
-
-	// Make sure w is not 0
-	if w.Cmp(big.NewInt(0)) == 0 {
-		w, err = rand.Int(rand.Reader, curve.Params().N)
-		if err != nil {
-			return nil, nil, nil, fmt.Errorf("failed to regenerate random number w: %v", err)
-		}
-	}
-	Wx, Wy := curve.ScalarBaseMult(w.Bytes())
-	wAx, wAy := curve.Add(Wx, Wy, UAx, UAy)
-	WAx = wAx
-	WAy = wAy
-	W = w
-	return WAx, WAy, w, nil
-}
-
-// Calculate HA = H256(entlA || idA || a || b || xG || yG || xPub || yPub)
-func CalculateHA(entlA int, idA []byte, a, b, xG, yG, xPub, yPub *big.Int) ([]byte,error) {
-	if a == nil || b == nil || xG == nil || yG == nil || xPub == nil || yPub == nil {
-		return nil, fmt.Errorf("one or more big.Int parameters passed in were nil")
-	}
-	entlABytes := make([]byte, 2)
-	binary.BigEndian.PutUint16(entlABytes, uint16(entlA))
-	data := append(entlABytes, idA...)
-	data = append(data, a.Bytes()...)
-	data = append(data, b.Bytes()...)
-	data = append(data, xG.Bytes()...)
-	data = append(data, yG.Bytes()...)
-	data = append(data, xPub.Bytes()...)
-	data = append(data, yPub.Bytes()...)
+	// 计算哈希值
 	hash := sm3.New()
 	hash.Write(data)
-	ha := hash.Sum(nil)
-	HA = ha
-	return HA,nil
+	return hash.Sum(nil)
 }
 
-// ComputeL  l = H256(xWA‖yWA‖HA) mod n
-func ComputeL(xWA, yWA *big.Int, HA []byte, n *big.Int) (*big.Int, error) {
-	xBits := intToBitString(xWA)
-	yBits := intToBitString(yWA)
-	hashData := append(xBits, yBits...)
-	hashData = append(hashData, HA...)
-	hash := sm3.Sum(hashData)
-	l := new(big.Int).SetBytes(hash[:])
-	l.Mod(l, n)  
-	if l.Cmp(big.NewInt(0)) < 0 {
-		return nil, fmt.Errorf("the calculated result l is a negative number")
+// KGC 为用户生成部分密钥 (tA 和 WA).
+func GenerateKGCPartialKey(userID string, entlenA int, kgcPrivateKey *sm2.PrivateKey,
+	userPublicKey *sm2.PublicKey) (*sm2.PublicKey, *big.Int) {
+	curve := sm2.P256Sm2() // 使用 SM2 P256 曲线
+	xPub, yPub := kgcPrivateKey.PublicKey.X, kgcPrivateKey.PublicKey.Y
+
+	// 检查 KGC 公私钥
+	IsOnCurve(kgcPrivateKey.D, kgcPrivateKey.X, kgcPrivateKey.Y)
+
+	// 计算 HA
+	ha := CalculateHA(userID, entlenA, xPub, yPub)
+
+	// 生成 KGC 部分私钥 w
+	w, err := sm2.GenerateKey(rand.Reader)
+	if err != nil {
+		fmt.Printf("Failed to generate KGC partial key: %v", err)
 	}
-	k := (n.BitLen() + 7) / 8
-	lBytes := intToBytes(l, k)
-	lInteger := new(big.Int).SetBytes(lBytes)
-	L = lInteger
-	return L, nil
+
+	// 计算 WA = [w]G + UA
+	waX, waY := curve.Add(userPublicKey.X, userPublicKey.Y, w.PublicKey.X, w.PublicKey.Y)
+
+	// 验证 WA 是否在曲线上
+	if !isPointOnCurve(curve, waX, waY) {
+		fmt.Printf("WA is not on the curve!")
+	}
+
+	// 计算 tA = (w + H * masterPrivateKey) mod n
+	haInt := new(big.Int).SetBytes(ha)
+	tA := new(big.Int).Mod(new(big.Int).Add(w.D, new(big.Int).Mul(haInt, kgcPrivateKey.D)), curve.Params().N)
+
+	waPublicKey := &sm2.PublicKey{
+		Curve: curve,
+		X:     waX,
+		Y:     waY,
+	}
+
+	IsOnCurve(tA, waX, waY)
+
+	return waPublicKey, tA
 }
 
-// intToBitString 
-func intToBitString(x *big.Int) []byte {
-	bitLen := x.BitLen()
-	byteLen := (bitLen + 7) / 8
-	bitString := make([]byte, byteLen)
-	xBytes := x.Bytes()
-	copy(bitString[byteLen-len(xBytes):], xBytes)
-	return bitString
+// 验证点是否在曲线上
+func isPointOnCurve(curve elliptic.Curve, x, y *big.Int) bool {
+	return curve.IsOnCurve(x, y)
 }
 
-// intToBytes 
-func intToBytes(x *big.Int, k int) []byte {
-	m := make([]byte, k)
-	xBytes := x.Bytes()
-	copy(m[k-len(xBytes):], xBytes)
-	return m
+func GetCurveParams() (gx, gy, n *big.Int) {
+	curve := sm2.P256Sm2() // 使用 SM2 P256 曲线
+	gx = curve.Params().Gx
+	gy = curve.Params().Gy
+	n = curve.Params().N
+	return
 }
 
-
-//Calculate tA= w + (l * ms)
-func ComputeTA(w, lInteger, ms, n *big.Int) *big.Int {
-	tA := new(big.Int).Set(w)
-	lMod := new(big.Int).Mod(lInteger, n)
-	msMod := new(big.Int).Mod(ms, n)
-	lMulMs := new(big.Int).Mul(lMod, msMod)
-	lMulMs.Mod(lMulMs, n)
-	tA.Add(tA, lMulMs)
-	tA.Mod(tA, n)
-	TA = tA
-	return TA
+func convertPrivKeyBytes(bs []byte) (*sm2.PrivateKey, error) {
+	d := new(big.Int).SetBytes(bs)
+	return convertPrivKey(d)
 }
 
+func VerifyUserKey(privkstr, pkstr string, userID string, entlenA int) bool {
+	pkbs, err := hex.DecodeString(pkstr)
+	if err != nil {
+		panic(err)
+	}
 
+	privkbs, err := hex.DecodeString(privkstr)
+	if err != nil {
+		panic(err)
+	}
 
+	pk, err := convertPrivKeyBytes(privkbs)
+	if err != nil {
+		panic(err)
+	}
 
+	PrintKey("User Public Key", pkbs)
 
+	/*
+		pubk, err := sm2.NewPublicKey(pkbs)
+		if err != nil {
+			panic(err)
+		}
+	*/
 
+	//pubk := convPublicKey(pkbs)
+	pubk := &pk.PublicKey
+	pubk.Curve = sm2.P256Sm2()
+	PrintKey("User Private Key", privkbs)
+
+	return VerifyKeyPair(pk.D, pubk, userID, entlenA)
+}
+
+func convPublicKey(bs []byte) *sm2.PublicKey {
+	bsx := bs[:32]
+	bsy := bs[32:]
+	bsix := new(big.Int).SetBytes(bsx)
+	bsiy := new(big.Int).SetBytes(bsy)
+
+	waPublicKey := &sm2.PublicKey{
+		Curve: sm2.P256Sm2(),
+		X:     bsix,
+		Y:     bsiy,
+	}
+
+	return waPublicKey
+}
+
+// VerifyKeyPair 验证密钥对的正确性
+func VerifyKeyPair(dA *big.Int, WA *sm2.PublicKey, userID string, entlenA int) bool {
+	// A1: 计算 HA
+	ha := CalculateHA(userID, entlenA, WA.X, WA.Y)
+
+	// A2: 转换 WA 的坐标为比特串并计算 l
+	xWA := WA.X
+	yWA := WA.Y
+	l := new(big.Int).SetBytes(sm3.New().Sum(append(append(xWA.Bytes(), yWA.Bytes()...), ha...)))
+
+	// 按照规范转换为整数
+	lInt := new(big.Int).Mod(l, WA.Curve.Params().N)
+	fmt.Printf("DBG l: %v\n", lInt)
+
+	_, kgcPubKey := GetFixedMasterKeyPair()
+
+	// A3: 计算 PA = WA + [l]Ppub
+	PAx, PAy := WA.X, WA.Y
+	//Ppub := &ecdsa.PublicKey{Curve: WA.Curve, X: kgcPubKey.X, Y: kgcPubKey.Y}
+	cx := new(big.Int).Mul(lInt, kgcPubKey.X)
+	cy := new(big.Int).Mul(lInt, kgcPubKey.Y)
+
+	PrintKey("CX", cx.Bytes())
+	PrintKey("CX", cy.Bytes())
+
+	PAx, PAy = WA.Curve.Add(PAx, PAy, cx, cy)
+
+	// A4: 计算 P'A = [dA]G
+	PAPx, PAPy := WA.Curve.ScalarBaseMult(dA.Bytes())
+
+	// A5: 检查 PA = P'A
+	if PAx.Cmp(PAPx) == 0 && PAy.Cmp(PAPy) == 0 {
+		fmt.Println("Verification successful")
+		return true
+	}
+	fmt.Println("Verification failed")
+	return false
+}
+
+type KGCenter struct {
+	MasterPrivateKey *sm2.PrivateKey // 系统主私钥 s
+	MasterPublicKey  *sm2.PublicKey  // 系统主公钥 P_pub
+}
+
+const (
+	PrivKey = `mxOLE8AD5Rg6FHELWn8rKfUqhwR5X47ggZdzcGtK6IQ=`
+	PubX    = `ELVMSG786oyTXVPlWi992DyichSDwQ2hnAC9E9Hrzz0=`
+	PubY    = `6NzvF6rs3IeNYLhUK6y3fuPVs/3h8TDgc0V2/18bHLM=`
+)
+
+func LoadDefault() *KGCenter {
+	privbs, _ := base64.StdEncoding.DecodeString(PrivKey)
+	kg := new(KGCenter)
+	pk, err := convertPrivKeyBytes(privbs)
+	if err != nil {
+		panic(err)
+	}
+	kg.MasterPrivateKey = pk
+	return kg
+}
+
+// 系统主密钥对 (KGC).
+func GetFixedMasterKeyPair() (*sm2.PrivateKey, *sm2.PublicKey) {
+	kg := LoadDefault()
+	return kg.MasterPrivateKey, &kg.MasterPrivateKey.PublicKey
+}
