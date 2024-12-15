@@ -1,14 +1,14 @@
 package gmsm
 
 import (
-	"crypto/ecdh"
-	"crypto/ecdsa"
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
 	"math/big"
 
-	"github.com/emmansun/gmsm/sm2"
+	"github.com/emmansun/gmsm/ecdh"
+	_ "github.com/emmansun/gmsm/sm2"
+	"github.com/tjfoc/gmsm/sm2"
 )
 
 const (
@@ -198,7 +198,7 @@ func Base64DecodeSM2ECDSAPrivateKey(pubKeyStr string, privKeyStr string) (*sm2.P
 	privKey.D = new(big.Int)
 	privKey.D.SetBytes(privKeyBytes[:])
 
-	privKey.PublicKey.Curve = sm2.P256()
+	privKey.PublicKey.Curve = sm2.P256Sm2()
 	privKey.PublicKey.X = new(big.Int)
 	privKey.PublicKey.Y = new(big.Int)
 	privKey.PublicKey.X.SetBytes(pubKeyBytes[:32])
@@ -207,7 +207,7 @@ func Base64DecodeSM2ECDSAPrivateKey(pubKeyStr string, privKeyStr string) (*sm2.P
 	return privKey, nil
 }
 
-func Base64DecodeSM2ECDSAPublicKey(pubKeyStr string) (*ecdsa.PublicKey, error) {
+func Base64DecodeSM2ECDSAPublicKey(pubKeyStr string) (*sm2.PublicKey, error) {
 	pubKeyBytes, err := base64.StdEncoding.DecodeString(pubKeyStr)
 	if err != nil {
 		return nil, err
@@ -216,8 +216,8 @@ func Base64DecodeSM2ECDSAPublicKey(pubKeyStr string) (*ecdsa.PublicKey, error) {
 		return nil, fmt.Errorf("size incorrect")
 	}
 
-	pubKey := &ecdsa.PublicKey{
-		Curve: sm2.P256(),
+	pubKey := &sm2.PublicKey{
+		Curve: sm2.P256Sm2(),
 		X:     new(big.Int),
 		Y:     new(big.Int),
 	}
