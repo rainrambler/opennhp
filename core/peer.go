@@ -143,7 +143,19 @@ func (p *UdpPeer) IsExpired() bool {
 	defer p.Unlock()
 
 	// p.ExpireTime is in seconds
-	return p.ExpireTime > 0 && time.Now().UnixMilli() > p.ExpireTime*1000
+	//return (p.ExpireTime > 0) && (time.Now().UnixMilli() > p.ExpireTime*1000)
+	if p.ExpireTime <= 0 {
+		return true
+	}
+
+	if p.lastRecvTime <= 0 {
+		return false
+	}
+
+	delta := time.Now().UnixMilli() - p.lastRecvTime
+	fmt.Printf("DBG UDPPeer Expiretime: %v for %s, Delta: %d\n", p.ExpireTime, p.name, delta)
+
+	return delta > p.ExpireTime*1000 // ms to sec
 }
 
 func (p *UdpPeer) LastSendTime() int64 {

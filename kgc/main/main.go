@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/OpenNHP/opennhp/KGC" // 导入 KGC 包
+	"github.com/OpenNHP/opennhp/core"
 )
 
 // KeyResponse 包含返回给 Agent 的部分密钥和椭圆曲线参数
@@ -19,6 +20,8 @@ type KeyResponse struct {
 	N                 string `json:"N"`
 }
 
+var kgc_inst *KGC.KGC2
+
 // 处理 /generateKeys 请求，生成部分密钥
 func handleKeyRequest(w http.ResponseWriter, r *http.Request) {
 	email := r.URL.Query().Get("email")
@@ -27,32 +30,49 @@ func handleKeyRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	uastr := r.URL.Query().Get("ua")
+	if email == "" {
+		http.Error(w, "user generated public param is required", http.StatusBadRequest)
+		return
+	}
+
+	// 测量生成主密钥对的时间
+	var el core.ElapseLogger
+	el.Start("KGC Master Key")
+	//startTime := time.Now() // 记录开始时间
+
+	kgc_inst = new(KGC.KGC2)
+	//kgcinst.LoadFixed()
+
 	// 生成 KGC 主密钥对
-	kgcPrivateKey, kgcPublicKey := KGC.GetFixedMasterKeyPair()
+	kgc_inst.InitRandMasterKeyPair()
 	//fmt.Println("KGC Private Key:", kgcPrivateKey)
 	//fmt.Println("KGC Public Key:", kgcPublicKey)
 
+	// 计算时间差
+	//generationDuration := time.Since(startTime)                   // 记录结束时间
+	//fmt.Println("kgc主密钥对生成时间:", generationDuration.Nanoseconds()) // 输出生成时间
+	el.Stop("KGC Master Key")
+
+	//pubfull := []byte{}
+	//pubfull = append(pubfull, kgcPublicKey.X.Bytes()...)
+	//pubfull = append(pubfull, kgcPublicKey.Y.Bytes()...)
+	//core.PrintKey("KGC Pub", pubfull)
+	//core.PrintKey("KGC Priv", kgcPrivateKey.D.Bytes())
+
 	// 用户信息
 	userID := email
-	entlenA := len(userID)
-
-	// 生成用户的部分密钥
-	waPublicKey, tA := KGC.GenerateKGCPartialKey(userID, entlenA, kgcPrivateKey, kgcPublicKey)
-	fmt.Println("WA Public Key:", waPublicKey)
-	fmt.Println("tA:", tA)
-
-	// 计算 HA
-	ha := KGC.CalculateHA(userID, entlenA, waPublicKey.X, waPublicKey.Y)
-	fmt.Println("HA:", ha)
+	tA, wa := kgc_inst.GenerateKGCPartialKey(userID, uastr)
+	xstr, ystr := core.Get_x_y(wa)
 
 	// 椭圆曲线的基点 G
-	Gx, Gy, N := KGC.GetCurveParams()
+	Gx, Gy, N := core.GetSM2CurveParams()
 
 	// 构建 JSON 响应
 	response := KeyResponse{
 		PartialPrivateKey: tA.Text(16),
-		PartialPublicKeyX: waPublicKey.X.Text(16),
-		PartialPublicKeyY: waPublicKey.Y.Text(16),
+		PartialPublicKeyX: xstr,
+		PartialPublicKeyY: ystr,
 		Gx:                Gx.Text(16),
 		Gy:                Gy.Text(16),
 		N:                 N.Text(16),
@@ -72,19 +92,13 @@ func verifyKeyRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userprivk := r.URL.Query().Get("userprivk")
-	if userprivk == "" {
-		http.Error(w, "User Private Key is required", http.StatusBadRequest)
-		return
-	}
-
 	userID := r.URL.Query().Get("user")
 	if userID == "" {
 		http.Error(w, "User ID is required", http.StatusBadRequest)
 		return
 	}
 
-	res := KGC.VerifyUserKey(userprivk, userpk, userID, len(userID))
+	res := kgc_inst.VerifyUserKey(userpk, userID, len(userID))
 
 	resstr := ""
 	if res {

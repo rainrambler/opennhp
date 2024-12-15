@@ -20,8 +20,8 @@ import (
 	"github.com/OpenNHP/opennhp/core"
 	"github.com/OpenNHP/opennhp/server"
 	"github.com/OpenNHP/opennhp/version"
-	_ "github.com/emmansun/gmsm/sm2"
-	"github.com/tjfoc/gmsm/sm2"
+	"github.com/emmansun/gmsm/sm2"
+	_ "github.com/tjfoc/gmsm/sm2"
 	"github.com/urfave/cli/v2"
 )
 
@@ -142,28 +142,27 @@ func main() {
 				log.Fatalf("Failed to parse partial public key Y")
 			}
 
-			cv := sm2.P256Sm2()
 			fmt.Printf("DBG: Curve Info: GX=%X, GY=%X, N=%X\n",
-				cv.Params().Gx.Bytes(),
-				cv.Params().Gy.Bytes(),
-				cv.Params().N.Bytes())
+				sm2.P256().Params().Gx.Bytes(),
+				sm2.P256().Params().Gy.Bytes(),
+				sm2.P256().Params().N.Bytes())
 
 			fmt.Printf("DBG Part Priv: %s, Pub X: %s, Y: %s\n",
 				to_base64(D_u.Bytes()), to_base64(P_u_X.Bytes()), to_base64(P_u_Y.Bytes()))
 
 			// 4. 生成 Server 的部分私钥和公钥
 			x_u := new(big.Int)
-			x_u, err = rand.Int(rand.Reader, cv.Params().N) // Server 部分私钥 x_u
+			x_u, err = rand.Int(rand.Reader, sm2.P256().Params().N) // Server 部分私钥 x_u
 			if err != nil {
 				log.Fatalf("Failed to generate server partial private key: %v", err)
 			}
-			X_u, Y_u := cv.ScalarBaseMult(x_u.Bytes()) // Server 部分公钥
+			X_u, Y_u := sm2.P256().ScalarBaseMult(x_u.Bytes()) // Server 部分公钥
 
 			fmt.Printf("Server partial private key (x_u): %s\n", x_u.Text(16))
 			fmt.Printf("Server partial public key (X_u, Y_u): (%s, %s)\n", X_u.Text(16), Y_u.Text(16))
 
 			// 5. 合并公钥 (P_u + X_u)
-			fullPubX, fullPubY := cv.Add(P_u_X, P_u_Y, X_u, Y_u)
+			fullPubX, fullPubY := sm2.P256().Add(P_u_X, P_u_Y, X_u, Y_u)
 			fmt.Printf("Full public key: (%s, %s)\n", fullPubX.Text(16), fullPubY.Text(16))
 
 			bsx := fullPubX.Bytes()
@@ -176,7 +175,7 @@ func main() {
 
 			// 6. 合并私钥 (D_u + x_u)
 			fullPriv := new(big.Int).Add(D_u, x_u)
-			fullPriv.Mod(fullPriv, cv.Params().N) // 完整私钥 D_u + x_u
+			fullPriv.Mod(fullPriv, sm2.P256().Params().N) // 完整私钥 D_u + x_u
 			fmt.Printf("Full private key: %s\n", fullPriv.Text(16))
 
 			bspriv := fullPriv.Bytes()

@@ -76,6 +76,7 @@ type Device struct {
 	msgToPacketQueue  chan *MsgData
 }
 
+// Param: Device type, Private Key
 func NewDevice(t int, prk []byte, option *DeviceOptions) *Device {
 	d := &Device{
 		deviceType: t,
@@ -162,6 +163,7 @@ func (d *Device) msgToPacketRoutine(id int) {
 
 		case md, ok := <-d.msgToPacketQueue:
 			if !ok {
+				log.Warning("msgToPacketRoutine %d: queue error!", id)
 				return
 			}
 			if md == nil {
@@ -211,6 +213,7 @@ func (d *Device) msgToPacketRoutine(id int) {
 				mad, err = d.createMsgAssemblerData(md)
 				// no errors will happen
 				if err != nil {
+					log.Error("msgToPacketRoutine %d: [%s] createMsgAssemblerData failed: %v", id, msgType, err)
 					return
 				}
 

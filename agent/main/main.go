@@ -20,8 +20,8 @@ import (
 	"github.com/OpenNHP/opennhp/agent"
 	"github.com/OpenNHP/opennhp/core"
 	"github.com/OpenNHP/opennhp/version"
-	_ "github.com/emmansun/gmsm/sm2"
-	"github.com/tjfoc/gmsm/sm2"
+	"github.com/emmansun/gmsm/sm2"
+	_ "github.com/tjfoc/gmsm/sm2"
 	"github.com/urfave/cli/v2"
 )
 
@@ -34,6 +34,10 @@ type KeyResponse struct {
 	Gy                string `json:"Gy"`
 	N                 string `json:"N"`
 }
+
+//const KGC_IP = "192.168.3.14"
+
+const KGC_IP = "127.0.0.1"
 
 func main() {
 	app := cli.NewApp()
@@ -79,8 +83,11 @@ func main() {
 		Action: func(c *cli.Context) error {
 			// 用户输入邮箱
 			var email string
-			fmt.Print("Enter your email: ")
-			fmt.Scanln(&email)
+			user_name := core.RandomString(5)
+			email = user_name + "@qq.com"
+			//fmt.Print("Enter your email: ")
+			//fmt.Scanln(&email)
+			fmt.Printf("UserID (email): %s\n", email)
 
 			// 定义邮箱格式的正则表达式
 			var emailRegex = regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`)
@@ -102,9 +109,37 @@ func main() {
 				return nil
 			}
 
+			//dastr, userpubk := core.Gen_sm2_keypair("rgevcbdh")
+			//da_bytes := core.Hex_to_bytes(dastr)
+			//dA_ := new(big.Int).SetBytes(da_bytes)
+			//core.Dbg_print_bigint("da priv", dA_)
+
+			// 椭圆曲线的参数
+			_, _, N := core.GetSM2CurveParams()
+
+			// 产生随机数 d'A ∈ [1, n−1]
+			var el core.ElapseLogger
+			el.Start("UA")
+
+			dA_, err := rand.Int(rand.Reader, N)
+			if err != nil {
+				log.Fatalf("Failed to generate random d'A: %v", err)
+			}
+
+			// 用户A计算UA=[d'A]G，并将标识IDA和UA提交KGC；
+			UA := core.GenPubKeyfromPrivKey(dA_)
+			el.Stop("UA")
+
+			//core.PrintKey("dA_", dA_.Bytes())
+			//core.PrintKey("UA X", UA.X.Bytes())
+			//core.PrintKey("UA Y", UA.Y.Bytes())
+			userpubk := core.PublicKeyToString(UA)
+
+			el.Start("TA")
 			// 继续与 KGC 交互的流程
 			// 1. 发送 HTTP 请求到 KGC 服务，获取部分密钥
-			resp, err := http.Get(fmt.Sprintf("http://localhost:8080/generateKeys?email=%s", email))
+			url := fmt.Sprintf("http://%s:8080/generateKeys?email=%s&ua=%s", KGC_IP, email, userpubk)
+			resp, err := http.Get(url)
 			if err != nil {
 				log.Fatalf("Failed to request KGC: %v", err)
 			}
@@ -123,10 +158,11 @@ func main() {
 			fmt.Printf("Curve order N: %s\n", keyResp.N)
 
 			// 3. 解析 KGC 返回的部分私钥和部分公钥
-			D_u, success := new(big.Int).SetString(keyResp.PartialPrivateKey, 16)
+			tA, success := new(big.Int).SetString(keyResp.PartialPrivateKey, 16)
 			if !success {
 				log.Fatalf("Failed to parse partial private key")
 			}
+
 			P_u_X, success := new(big.Int).SetString(keyResp.PartialPublicKeyX, 16)
 			if !success {
 				log.Fatalf("Failed to parse partial public key X")
@@ -136,41 +172,34 @@ func main() {
 				log.Fatalf("Failed to parse partial public key Y")
 			}
 
+			//fmt.Printf("Time taken to generate tA: %v\n", time.Since(tastartTime))
+			el.Stop("TA")
+
 			fmt.Println("Checking partial user keys...")
-			core.IsOnCurve(D_u, P_u_X, P_u_Y)
+			core.IsOnCurve(tA, P_u_X, P_u_Y)
 			core.IsOnCurveSM2(P_u_X, P_u_Y)
 
-			//curve1 := sm2.P256()
 			Nval, success := new(big.Int).SetString(keyResp.N, 16)
 			if !success {
 				log.Fatalf("Failed to parse N")
 			}
-			//Nval := keyResp.N
 
-			// 3. 产生随机数 d'A ∈ [1, n−1]
-			dA_, err := rand.Int(rand.Reader, Nval)
-			if err != nil {
-				log.Fatalf("Failed to generate random d'A: %v", err)
-			}
+			//da_demo := core.Gen_fixed_256bits("acsvfv")
+			//d_a_h := core.Hex_to_bytes(da_demo)
+			//da_val := new(big.Int).SetBytes(d_a_h)
 
-			// 4. 计算 UA = [d'A]G
-			curve1 := sm2.P256Sm2()
-			UAx, UAy := curve1.ScalarBaseMult(dA_.Bytes())
+			el.Start("DA")
+			//dAStartTime := time.Now() // 记录计算 dA 的开始时间
 
-			// 这里将 UAx 和 UAy 打印出来以避免未使用的错误
-			log.Printf("UA coordinates: (%s, %s)", UAx.String(), UAy.String())
-
-			// 5. 提交 IDA 和 UA 给 KGC
-			//waPublicKey, tA := KGC.GenerateKGCPartialKey(userID, entlenA, kgcPrivateKey, kgcPublicKey)
-			waPublicKey := &sm2.PublicKey{
-				Curve: curve1,
-				X:     P_u_X,
-				Y:     P_u_Y,
-			}
-			tA := D_u
-
-			// 6. 计算 dA = (tA + d'A) mod n
+			// A3：用户A计算dA=(tA+d'A) mod n；
 			dA := new(big.Int).Mod(new(big.Int).Add(tA, dA_), Nval)
+
+			el.Stop("DA")
+			//dAElapsedTime := time.Since(dAStartTime) // 记录计算 dA 的时间
+
+			//core.Dbg_print_bigint("tA", tA)
+			//core.Dbg_print_bigint("da h", dA_)
+			//core.Dbg_print_bigint("da", dA)
 
 			if dA.Sign() == 0 {
 				log.Println("dA is 0, returning A1")
@@ -178,31 +207,60 @@ func main() {
 				return nil
 			}
 
-			// 7. 返回 dA 和 WA
-			//return dA, waPublicKey
-			fmt.Println("Checking user keys...")
-			core.IsOnCurve(dA, waPublicKey.X, waPublicKey.Y)
-			core.IsOnCurveSM2(waPublicKey.X, waPublicKey.Y)
+			el.Start("dA Public")
+			pub_k := core.GeneratePubKeyfromPrivKey(core.BigIntToHexString(dA))
+			el.Stop("dA Public")
+			//fmt.Printf("Time taken to generate PA: %v\n", elapsedTime2.Nanoseconds())
 
-			bsx := waPublicKey.X.Bytes()
-			bsy := waPublicKey.Y.Bytes()
-			bspub := bsx
-			bspub = append(bspub, bsy...)
+			bspub := core.Hex_to_bytes(pub_k)
 			core.PrintKey("User Full Public Key", bspub)
-			//fmt.Printf("DBG: Full Public Key: %X\n", bspub)
-			//pub64 := base64.StdEncoding.EncodeToString(bspub)
-			//fmt.Printf("Public Key BASE64: %s\n", pub64)
 
-			// 6. 合并私钥 (D_u + x_u)
 			fullPriv := dA
 			//fmt.Printf("Full private key: %s\n", fullPriv.Text(16))
 			bspriv := fullPriv.Bytes()
-			core.PrintKey("User Full Private Key", bspriv)
+			//core.PrintKey("User Full Private Key", bspriv)
 			//fmt.Printf("DBG: Full Private Key: %X\n", bspriv)
 			//priv64 := base64.StdEncoding.EncodeToString(bspriv)
 			//fmt.Printf("Private Key BASE64: %s\n", priv64)
 
-			verifyUserKeys(bspub, bspriv, email)
+			verifyUserKeysByKGC(bspub, email)
+
+			privk_sm2, err := sm2.NewPrivateKey(bspriv)
+			if err != nil {
+				fmt.Printf("WARN: gen_keypair Cannot convert PrivK string: %s\n", fullPriv.String())
+				return nil
+			}
+
+			//pub_bs := core.Hex_to_bytes(bspub)
+			//PrintKey("Public Key", pub_bs)
+			padbs := []byte{0x04}
+			padbs = append(padbs, bspub...)
+			pk_sm2, err := sm2.NewPublicKey(padbs)
+			if err != nil {
+				fmt.Printf("WARN: gen_keypair Cannot convert PK string: %s: %v\n",
+					pub_k, err)
+				return nil
+			}
+
+			core.PrintKey("WA X", P_u_X.Bytes())
+			core.PrintKey("WA Y", P_u_Y.Bytes())
+			core.PrintKey("PK X", pk_sm2.X.Bytes())
+			core.PrintKey("PK Y", pk_sm2.Y.Bytes())
+
+			plain := "ABC"
+			plainbs := []byte(plain)
+
+			encrypterOpts := sm2.NewPlainEncrypterOpts(sm2.MarshalCompressed, sm2.C1C3C2)
+			ciphertext, err := sm2.Encrypt(rand.Reader, pk_sm2, plainbs, encrypterOpts)
+			if err != nil {
+				fmt.Printf("WARN: encrypt failed %v", err)
+			}
+			plaintext, err := sm2.Decrypt(privk_sm2, ciphertext)
+			if err != nil {
+				fmt.Printf("WARN: decrypt failed %v", err)
+			}
+
+			fmt.Printf("Verified. Result: %s\n", plaintext)
 
 			return nil
 		},
@@ -258,11 +316,11 @@ type VerifyResponse struct {
 	Result string `json:"result"`
 }
 
-func verifyUserKeys(pubk, privk []byte, userid string) {
+func verifyUserKeysByKGC(pubk []byte, userid string) {
 	pk64 := hex.EncodeToString(pubk)
-	priv64 := hex.EncodeToString(privk)
-	url1 := fmt.Sprintf("http://localhost:8080/verifyKeys?user=%s&userpk=%s&userprivk=%s",
-		userid, pk64, priv64)
+	//priv64 := hex.EncodeToString(privk)
+	url1 := fmt.Sprintf("http://%s:8080/verifyKeys?user=%s&userpk=%s",
+		KGC_IP, userid, pk64)
 	// 1. 发送 HTTP 请求到 KGC 服务
 	resp, err := http.Get(url1)
 	if err != nil {
@@ -279,6 +337,27 @@ func verifyUserKeys(pubk, privk []byte, userid string) {
 	fmt.Printf("Verification result: %s\n", keyResp.Result)
 }
 
+func verifyUserKeysByEncrypt(pubk, privk []byte) {
+	pkinst, err := sm2.NewPrivateKey(privk)
+	if err != nil {
+		fmt.Printf("WARN: Cannot generate Priv Key: %x\n", privk)
+		return
+	}
+
+	pbk := &pkinst.PublicKey
+
+	pbhex := fmt.Sprintf("%x", pubk)
+	pub_key := core.Str_to_pk(pbhex)
+	if pbk.X.Cmp(pub_key.X) != 0 {
+		fmt.Printf("X not same: %x vs %x\n", pbk.X.Bytes(), pub_key.X.Bytes())
+	}
+	if pbk.Y.Cmp(pub_key.Y) != 0 {
+		fmt.Printf("Y not same: %x vs %x\n", pbk.Y.Bytes(), pub_key.Y.Bytes())
+	}
+
+	fmt.Printf("Verified for %x and %x\n", privk, pubk)
+}
+
 func runApp() error {
 	exeFilePath, err := os.Executable()
 	if err != nil {
@@ -286,7 +365,7 @@ func runApp() error {
 		return err
 	}
 	exeDirPath := filepath.Dir(exeFilePath)
-	fmt.Printf("DBG: Path: %s, File: %s\n", exeDirPath, exeFilePath)
+	//fmt.Printf("DBG: Path: %s, File: %s\n", exeDirPath, exeFilePath)
 
 	a := &agent.UdpAgent{}
 	err = a.Start(exeDirPath, 4) // log level
