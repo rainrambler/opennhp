@@ -15,6 +15,8 @@
 
 **OpenNHP** is the open source implementation of NHP.
 
+**Caution**: This repository is experimental, only for testing SM2 algorithm.
+
 ![Build Status](https://img.shields.io/badge/build-passing-brightgreen)
 ![Version](https://img.shields.io/badge/version-1.0.0-blue)
 ![License](https://img.shields.io/badge/license-Apache%202.0-green)
