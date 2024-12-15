@@ -130,6 +130,7 @@ func (a *UdpAgent) Start(dirPath string, logLevel int) (err error) {
 
 	err = a.loadBaseConfig()
 	if err != nil {
+		log.Error("Cannot parser config: %v", err)
 		return err
 	}
 
