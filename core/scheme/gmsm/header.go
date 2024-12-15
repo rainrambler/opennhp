@@ -73,8 +73,15 @@ func (h *HeaderGmsm) Flag() uint16 {
 }
 
 func (h *HeaderGmsm) SetFlag(flag uint16) {
+	flag += uint16(NHP_FLAG_EXTENDEDLENGTH)
+	fmt.Printf("DBG HeaderGmsm SetFlag to %d (0x%x)\n", flag, flag)
+	binary.BigEndian.PutUint16(h.HeaderCommon[10:12], flag)
+}
+
+func (h *HeaderGmsm) SetFlag2(flag uint16) {
+	fmt.Printf("DBG HeaderGmsm Flag: %d (0x%x)\n", flag, flag)
 	flag |= uint16(NHP_FLAG_EXTENDEDLENGTH)
-	flag &= 0x0FFF
+	flag &= 0xF << 12
 	flag |= NHP_FLAG_SCHEME_GMSM << 12
 	binary.BigEndian.PutUint16(h.HeaderCommon[10:12], flag)
 }
