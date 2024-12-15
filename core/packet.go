@@ -104,8 +104,8 @@ type Packet struct {
 
 // header flags (bit 0 - bit 11)
 const (
-	NHP_FLAG_EXTENDEDLENGTH = 1 << iota
-	NHP_FLAG_COMPRESS
+	NHP_FLAG_EXTENDEDLENGTH = 1 << iota // 1
+	NHP_FLAG_COMPRESS                   // 2
 )
 
 // cipher scheme combination (bit 11 - bit 15)
